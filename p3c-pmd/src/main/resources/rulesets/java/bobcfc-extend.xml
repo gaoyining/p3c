@@ -1,0 +1,82 @@
+<?xml version="1.0"?>
+
+<ruleset name="AlibabaJavaMethodParameter" xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 http://pmd.sourceforge.net/ruleset_2_0_0.xsd">
+    <description>AlibabaJavaComments</description>
+
+<!--    <rule name="MethodParameterCountRule"-->
+<!--          language="java"-->
+<!--          message="java.extend.MethodParameterCountRule.rule.msg"-->
+<!--          class="com.alibaba.p3c.pmd.lang.java.rule.extend.MethodParameterCountRule">-->
+<!--        &lt;!&ndash;级别，1强制，2推荐，3参考&ndash;&gt;-->
+<!--        <priority>3</priority>-->
+
+<!--        <example>-->
+<!--            <![CDATA[-->
+<!--Negative example:-->
+<!--    public void methodB(int a, int b, int c, int d, int e) {-->
+
+<!--    }-->
+<!--]]>-->
+<!--        </example>-->
+<!--        <example>-->
+<!--            <![CDATA[-->
+<!--Positive example:-->
+<!--    public void methodA() {-->
+
+<!--    }-->
+<!--]]>-->
+<!--        </example>-->
+<!--    </rule>-->
+
+
+    <rule name="ConnectionClosedRule"
+          language="java"
+          message="java.extend.ConnectionClosedRule.rule.msg"
+          class="com.alibaba.p3c.pmd.lang.java.rule.extend.ConnectionClosedRule">
+        <!--级别，1强制，2推荐，3参考-->
+        <priority>1</priority>
+
+        <example>
+            <![CDATA[
+Negative example:
+    //1.加载驱动
+    Class.forName("com.microsoft.jdbc.sqlserver.SQLServerDriver");
+	//2.得到连接(1433表示sql server的默认端口)
+	ct=DriverManager.getConnection("jdbc:microsoft:sqlserver://localhost:1433;databaseName=shen","sa","Anxin062039");
+]]>
+        </example>
+        <example>
+            <![CDATA[
+Positive example:
+    //关闭链接，释放资源
+	if(rs!=null){
+		try{
+			rs.close();
+		}catch (Exception e) {
+			e.printStackTrace();
+		}
+		rs = null;
+
+	}
+	if(st!=null){
+		try{
+			st.close();
+		}catch (Exception e) {
+			e.printStackTrace();
+		}
+
+	}
+	if(conn!=null){
+		try{
+			conn.close();
+		}catch (Exception e) {
+			e.printStackTrace();
+		}
+    }
+]]>
+        </example>
+    </rule>
+
+</ruleset>

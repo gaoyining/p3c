@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<test-data xmlns="http://pmd.sourceforge.net/rule-tests"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:schemaLocation="http://pmd.sourceforge.net/rule-tests https://pmd.sourceforge.io/rule-tests_1_0_0.xsd">
+
+    <code-fragment id="测试样例">
+        <![CDATA[
+    package org.p3c.demo;
+
+    public class Demo {
+
+        public void methodA(int a) {
+
+        }
+
+        public void methodB(int a, int b, int c, int d, int e) {
+
+        }
+    }
+        ]]>
+    </code-fragment>
+    <test-code>
+        <description>Method paramter count</description>
+        <!-- 预期问题个数 -->
+        <expected-problems>0</expected-problems>
+        <code-ref id="测试样例" />
+    </test-code>
+</test-data>

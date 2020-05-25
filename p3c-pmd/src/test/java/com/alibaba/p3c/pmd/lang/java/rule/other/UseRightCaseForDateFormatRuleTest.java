@@ -16,6 +16,7 @@ public class UseRightCaseForDateFormatRuleTest extends ExtendRuleTst {
     public void testExam1() {
         String ruleName = "UseRightCaseForDateFormatRule";
         String examFilePath = "java/" + ruleName + "Exam.java";
+        System.out.println(examFilePath);
         String expectedVioLineNumbers = "16,26,32,34,36";
 
         Rule rule = findRule(OtherRulesTest.RULESET, ruleName);

@@ -1,0 +1,883 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<test-data xmlns="http://pmd.sourceforge.net/rule-tests"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:schemaLocation="http://pmd.sourceforge.net/rule-tests https://pmd.sourceforge.io/rule-tests_1_0_0.xsd">
+
+    <code-fragment id="测试样例">
+        <![CDATA[
+package com.yucheng.ycloans.jingdong.repay.activeMQ.service;
+
+import java.io.Serializable;
+import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.sql.DataSource;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.Validate;
+import org.apache.log4j.Logger;
+
+import com.alibaba.fastjson.JSONObject;
+import com.ecc.emp.component.factory.EMPFlowComponentFactory;
+import com.ecc.emp.core.Context;
+import com.ecc.emp.data.IndexedCollection;
+import com.ecc.emp.data.KeyedCollection;
+import com.ecc.emp.ext.lock.LockSync;
+import com.ecc.emp.jdbc.ConnectionManager;
+import com.ecc.emp.jdbc.EMPJDBCException;
+import com.sttx.cts.applrequest.api.bean.LcAppl;
+import com.yucheng.cmis.pub.PUBConstant;
+import com.yucheng.cmis.pub.SInfoFactory;
+import com.yucheng.cmis.pub.util.SInfoUtils;
+import com.yucheng.cmis.pub.util.StringUtil;
+import com.yucheng.cmis.pub.util.TimeUtil;
+import com.yucheng.cmis.sh2.biz.factory.Factory;
+import com.yucheng.ycloans.jingdong.repay.activeMQ.domain.JingDongRepayReq;
+import com.yucheng.ycloans.lm.acc.lmsetlmtlogt.component.LmSetlmtLogTComp;
+import com.yuchengtech.ycloans.OnlineParam;
+import com.yuchengtech.ycloans.OperaUserInf;
+import com.yuchengtech.ycloans.ServiceContainer;
+import com.yuchengtech.ycloans.YcLoansException;
+import com.yuchengtech.ycloans.buz.AccountRegValueUtils;
+import com.yuchengtech.ycloans.buz.AccountUtils;
+import com.yuchengtech.ycloans.buz.BatchJobContext;
+import com.yuchengtech.ycloans.buz.domain.PubAccountValue;
+import com.yuchengtech.ycloans.card2ycloans.utils.Card2YcloansCommUtils;
+import com.yuchengtech.ycloans.card2ycloans.utils.Card2YcloansException;
+import com.yuchengtech.ycloans.card2ycloans.utils.InitiativeRepaymentUtils;
+import com.yuchengtech.ycloans.common.DateOperation;
+import com.yuchengtech.ycloans.common.SystemInfo;
+import com.yuchengtech.ycloans.common.SystemUtils;
+import com.yuchengtech.ycloans.common.enumeration.ATPYState;
+import com.yuchengtech.ycloans.common.enumeration.ChannelTyp;
+import com.yuchengtech.ycloans.common.enumeration.JobBussType;
+import com.yuchengtech.ycloans.common.enumeration.PaymentMode;
+import com.yuchengtech.ycloans.common.enumeration.TransCode;
+import com.yuchengtech.ycloans.common.enumeration.YnFlag;
+import com.yuchengtech.ycloans.db.DAOContainer;
+import com.yuchengtech.ycloans.db.buz.AsynJDPayResutInform;
+import com.yuchengtech.ycloans.db.dao.Card2YcloansDAO;
+import com.yuchengtech.ycloans.db.domain.LmAtpyDetl;
+import com.yuchengtech.ycloans.db.domain.LmFeeTxT;
+import com.yuchengtech.ycloans.db.domain.LmGlTx;
+import com.yuchengtech.ycloans.db.domain.LmLnInfo;
+import com.yuchengtech.ycloans.db.domain.LmLoan;
+import com.yuchengtech.ycloans.db.domain.LmLoanCont;
+import com.yuchengtech.ycloans.db.domain.LmOlDdaLog;
+import com.yuchengtech.ycloans.db.domain.LmOlDdaLogId;
+import com.yuchengtech.ycloans.db.domain.LmPmShd;
+import com.yuchengtech.ycloans.db.domain.LmSetlmtLogT;
+import com.yuchengtech.ycloans.db.domain.MqMessage;
+import com.yuchengtech.ycloans.db.domain.RedlineAdjLog;
+import com.yuchengtech.ycloans.db.domain.trans.LmTransferFeeTrans;
+
+/**
+ * @ClassName: JingDongRepayKeepAccts
+ * @Description: 将原YC00043接口重构为MQ异步处理方式，此类为京东还款记账Service
+ * @Author liuyd[liuyd4@yusys.com.cn]
+ * @DateTime 2020年3月10日 上午10:33:27
+ */
+public class JingDongRepayKeepAccts {
+
+	private Logger log = Logger.getLogger(JingDongRepayKeepAccts.class); // 打印日志
+
+	/**
+	 * @Title: keepAccounts
+	 * @Description: 京东还款记账处理
+	 * @Author liuyd[liuyd4@yusys.com.cn]
+	 * @DateTime 2020年3月10日 上午10:36:38
+	 * @param paramJsonStr 请求参数json格式字符串
+	 */
+	@SuppressWarnings("static-access")
+	public void keepAccounts(String paramJsonStr) {
+		System.out.println("京东还款记账处理开始，收到MQ消息：" + paramJsonStr);
+
+		EMPFlowComponentFactory factory = null;
+		Context rootCtx = null;
+		Context cont = null;
+		Card2YcloansDAO dao = null;
+		DataSource dataSource = null;
+		Connection conn = null;
+
+		JingDongRepayReq jingDongRepayReq = null; //请求参数实体类对象
+		boolean isInform = true; //是否推送,只有记账成功的进行结果推送,处理中的不推送
+		LmLoan lmLoan = new LmLoan();
+		Map<String, String> respMap = new HashMap<String, String>();
+		String repaymentNo = ""; //平台还款单号
+		String paymentNo = ""; //信贷平台提现单号
+		try{
+			//json字符串转实体对象
+			try {
+				jingDongRepayReq = JSONObject.parseObject(paramJsonStr, JingDongRepayReq.class);
+			} catch (Exception e) {
+				log.error("解析json字符串到实体对象异常", e);
+				throw new Exception("解析json字符串到实体对象异常");
+			}
+
+			if (jingDongRepayReq == null) {
+				log.info("解析出的实体对象为null");
+				throw new Exception("解析出的实体对象为null");
+			}
+
+			String applyNo = jingDongRepayReq.getApplyNo();//平台申请单号
+			String repaymentStatus = jingDongRepayReq.getRepaymentStatus();//还款状态
+			String repaymentDealTime  = jingDongRepayReq.getRepaymentDealTime();//还款时间
+			String mhtRepaymentDate = jingDongRepayReq.getMhtRepaymentDate();//确认还款时间
+			String repaymentAmount  = jingDongRepayReq.getRepaymentAmount().toString();//还款金额
+			String repaymentPeriod = jingDongRepayReq.getRepaymentPeriod();//还款期数
+			String repaymentType = jingDongRepayReq.getRepaymentType();//还款类型
+			String type = jingDongRepayReq.getType();//请求类型 WITHHOLD 自动代扣 REPAYMENT 主动还款
+			repaymentNo = jingDongRepayReq.getRepaymentNo();//平台还款单号
+			paymentNo = jingDongRepayReq.getPaymentNo();//信贷平台提现单号
+//			String userId = jingDongRepayReq.getUserId();//用户唯一标示
+//			String notifyUrl = jingDongRepayReq.getNotifyUrl();//回调地址
+
+			factory = (EMPFlowComponentFactory) EMPFlowComponentFactory.getComponentFactory("CMISBiz");
+			rootCtx = factory.getContextNamed(factory.getRootContextName());
+			dataSource = (DataSource) rootCtx.getService("dataSource");
+			conn = ConnectionManager.getConnection(dataSource);
+			Validate.notNull(conn);
+			// 初始化DAO
+			dao = DAOContainer.getCard2YcloansDAO(conn != null);
+			Validate.notNull(dao);
+			cont = (Context) rootCtx.clone();
+
+			// 设置数据库为手动提交模式
+//			if (conn.getAutoCommit()) {
+//				conn.setAutoCommit(false);
+//			}
+
+			//回传参数
+			respMap.put("applyNo", applyNo);	//平台申请单号
+			respMap.put("repaymentNo", repaymentNo);	//平台还款单号
+			respMap.put("repaymentPeriod", repaymentPeriod);	//还款期数
+			respMap.put("type", type);	//还款请求类型
+
+			//常量准备
+			Map<String, String> intfMap = SInfoFactory.getSysInfoFactoryInstance().getIntfMap();
+//			String jdSleepTime = intfMap.get("jd_sleep_time");	//京东同时还款等待时间
+			String jdRepeatTime = intfMap.get("jd_repeat_time");	//京东订单重复发起间隔时间
+			String openDay = SystemInfo.getSystemInfo().getBuzDate();	//	当前系统日期
+			String lastDueDt = ServiceContainer.getSystemInit().findLastBuzDate();	//前一天日期
+			String paymChannel = ChannelTyp.JINGDONG.getCodeInDb();	//还款渠道 JINGDONG: 京东还款
+			double amtNew = SystemUtils.amtDiv(Double.parseDouble(repaymentAmount),100);//京东还款总金额
+
+			//====================== 数据校验开始 ==========================================
+			//主动还款操作是否允许校验
+			if ("REPAYMENT".equals(type)) {
+				//开关校验
+				if (!AccountUtils.checkNeedSendToCore(ChannelTyp.JINGDONG_2.getCodeInDb())) {
+					throw new Card2YcloansException("INV00001", "当前系统不允许主动还款!");
+				}
+				//时间校验
+				String JDSTARTTIME = SInfoFactory.getSysInfoFactoryInstance().getIntfMap().get("JDSTARTTIME");
+				String JDENDTIME = SInfoFactory.getSysInfoFactoryInstance().getIntfMap().get("JDENDTIME");
+				String curTime = TimeUtil.getCurrentTime().replace(":", "");
+				if (Integer.parseInt(curTime) > Integer.parseInt(JDENDTIME.replace(":", "")) || Integer.parseInt(curTime) < Integer.parseInt(JDSTARTTIME.replace(":", ""))) {
+					throw new Card2YcloansException("INV00001", "请在"+JDSTARTTIME + "~" + JDENDTIME +"时间段操作,当前时间不允许操作!");
+				}
+			}
+
+			//获取对应的申请信息
+			List<Serializable> lcAppls = new ArrayList<Serializable>();
+			String sql = " select * from lc_appl where bill_no = ? and state = ? ";
+			Object[] params = new Object[]{paymentNo, "997"};
+			lcAppls = dao.findBySql(conn, sql, params, new LcAppl());
+			if (CollectionUtils.isEmpty(lcAppls)) {
+				throw new Card2YcloansException("INV00001", "未找到该笔订单对应的申请信息,请确认订单号!");
+			}
+			LcAppl lcAppl = (LcAppl)lcAppls.get(0);
+
+			String loanNo = lcAppl.getContNo() + "001";	//借据号
+
+			//获取对应的借据信息
+			List<Serializable> lmLoans= new ArrayList<Serializable>();
+			sql = " select * from lm_loan where loan_no = ? ";
+			params = new Object[]{loanNo};
+			lmLoans = dao.findBySql(conn, sql, params, new LmLoan());
+			if (CollectionUtils.isEmpty(lmLoans)) {
+				throw new Card2YcloansException("INV00001", "未找到该笔订单对应的借据信息,请确认订单号!");
+			}
+			lmLoan = (LmLoan)lmLoans.get(0);
+			respMap.put("loanNo", loanNo);	//借据号
+
+			//是否重复发起校验
+			boolean isReapte = false;
+			System.out.println("=== 京东还款重复发起校验开始 , 借据号: " + loanNo + " ===");
+			//是否重复发起校验 -- 主动还款
+			LmOlDdaLog isLmOlDdaLog = DAOContainer.getLmOlDdaLogDAO(false).findBySessionIdAndBankCde(null, repaymentNo, 1L, "LNC4",ChannelTyp.JINGDONG.getCodeInDb(), loanNo);
+			if (null != isLmOlDdaLog) {
+				System.out.println("=== 京东主动还款重复发起 , 借据号: " + loanNo + " ===");
+				respMap.put("mhtRepaymentNo", isLmOlDdaLog.getId().getTxlogSeq()+"");	//出资方还款单号
+				respMap.put("repaymentAmount", SystemUtils.amtMultToString(isLmOlDdaLog.getActTransAmt(), 100));	//还款金额
+				//处理完成
+				if (ATPYState.COMPLETE.getCodeInDb().equals(isLmOlDdaLog.getDdaSts())) {
+					isReapte = true;
+					respMap.put("code", Card2YcloansException.ERROR00000);	//返回编码
+					respMap.put("msg", "成功");	//返回信息
+					respMap.put("repaymentDealStatus", "SUCCESS");	//处理状态 (入账状 态)
+				}
+				//处理失败
+				if (ATPYState.FA.getCodeInDb().equals(isLmOlDdaLog.getDdaSts())) {
+					isReapte = true;
+					respMap.put("code", Card2YcloansException.ERROR99999);	//返回编码
+					respMap.put("msg", isLmOlDdaLog.getErrDesc());	//返回信息
+					respMap.put("repaymentDealStatus", "FAILURE");	//处理状态 (入账状 态)
+				}
+				//正在处理
+				if (ATPYState.FREEZE.getCodeInDb().equals(isLmOlDdaLog.getDdaSts())) {
+					isReapte = true;
+					isInform = false;
+				}
+			}
+
+			//订单号加入缓存,防止同时提交多次
+			if (!LockSync.lockByKey("JDZDHK_"+repaymentNo, "Y", Integer.valueOf(jdRepeatTime))) {
+				isInform = false;
+				System.out.println("=== 京东还款重复通知,平台订单号: " + repaymentNo + " ===");
+				throw new Card2YcloansException("INV00001", "=== 京东还款重复通知,平台订单号: " + repaymentNo + " ===");
+			}
+
+			System.out.println("=== 京东还款重复发起校验结束 , 借据号: " + loanNo + " ===结果:"+isReapte);
+
+			//====================== 数据校验结束 ==========================================
+
+			// add by liuyd for 校验mq_message 20200402 start
+			String sqlString = " select * from mq_message mm where mm.buss_no = ? and mm.status = ? and mm.channel = ? and mm.buss_type = ? ";
+			Object[] paramss = new Object[]{repaymentNo,"0","JingDong","repay"};
+			List<Serializable> mqMessageList = new ArrayList<Serializable>();
+			mqMessageList = dao.findBySql(conn, sqlString, paramss, new MqMessage());
+			if(mqMessageList != null && mqMessageList.size() == 1) {
+				log.info("=== 校验mq_message符合条件，可以继续下面的业务处理 ===");
+				// 更新mq_message表此笔status为‘1’
+				MqMessage mqMessage = (MqMessage)mqMessageList.get(0);
+				mqMessage.setStatus("1"); // 处理中
+				mqMessage.setUpdateTime(DateOperation.getNowDateTimeString());
+				dao.update(conn, mqMessage, "seqNo");
+				conn.commit();
+			} else {
+				log.info("=== 校验mq_message不符合条件,还款订单号: " + repaymentNo + " ===");
+				throw new Card2YcloansException("INV00001", "=== 校验mq_message不符合条件,还款订单号: " + repaymentNo + " ===");
+			}
+			// add by liuyd for 校验mq_message 20200402 end
+
+			if (!isReapte) {
+
+				if ("SETL".equals(lmLoan.getLoanSts())) {
+					throw new Card2YcloansException("INV00001", "提现已结清，无需还款!");
+				}
+
+				if (!"SUCCESS".equals(repaymentStatus)) {
+					throw new Card2YcloansException("INV00001", "还款状态:" + repaymentStatus + "不正确,操作不允许!");
+				}
+
+				//======================================================================
+
+				//批扣数据处理
+				if ("WITHHOLD".equals(type)) {
+
+					System.out.println("=== 京东批扣还款发起开始 , 借据号: " + loanNo + " ===");
+
+					if (StringUtil.isNull(repaymentPeriod)) {
+						throw new Card2YcloansException("INV00001", "京东批扣时,还款期数:" + repaymentPeriod + "不正确,操作不允许!");
+					}
+
+					//还款数据是否存在校验
+					String periods = repaymentPeriod.replace(",", "','");
+					List<Serializable> lmAtpyDetls= new ArrayList<Serializable>();
+					sql = " select * from lm_atpy_detl where loan_no = ? and repayment_period in ('"+periods+"')  and atpy_val_dt = ? and atpy_acct_bank_cde = ? and atpy_sts = ? ";
+					params = new Object[]{loanNo,openDay, paymChannel, ATPYState.FA.getCodeInDb() };
+					lmAtpyDetls = dao.findBySql(conn, sql, params, new LmAtpyDetl());
+					if (CollectionUtils.isEmpty(lmAtpyDetls)) {
+						throw new Card2YcloansException("INV00001", "未找到该笔订单对应的还款信息,请确认订单号!");
+					}
+
+					//连续逾期多期的数据，前几期在当期还款日当天还款后借据状态仍为DELQ add by yangxin 20191202 start
+					List<Serializable> lmPmShds = new ArrayList<Serializable>();
+					sql = " select * from lm_pm_shd where loan_no = ? and ps_perd_no in ( " + repaymentPeriod +  " ) order by ps_perd_no ";
+					params = new Object[]{loanNo};
+					lmPmShds = dao.findBySql(conn, sql, params, new LmPmShd());
+					String psOdInd = "";
+					for (int i = 0; i < lmPmShds.size(); i++) {
+						LmPmShd lmPmShd = (LmPmShd)lmPmShds.get(i);
+						//获取归还所有期数中最后一期的逾期状态
+						psOdInd = lmPmShd.getPsOdInd();
+					}
+					//连续逾期多期的数据，前几期在当期还款日当天还款后借据状态仍为DELQ add by yangxin 20191202 end
+
+					//校验批扣金额时否一致
+					double psAmt = 0;	//应还金额
+					for (int i = 0; i < lmAtpyDetls.size(); i++) {
+						LmAtpyDetl lmAtpyDetl = (LmAtpyDetl)lmAtpyDetls.get(i);
+						psAmt = SystemUtils.amtAddNull(psAmt, lmAtpyDetl.getAtpyPaymAmt());
+					}
+
+					if (!SystemUtils.isAmtEqual(amtNew, psAmt)) {
+						throw new Card2YcloansException("INV00001", "应还金额和实还金额不配,请确认!");
+					}
+
+					//对于还逾期多期的记录做特殊处理
+					int loan_od_grace=0;
+					boolean flag =false;
+					if (("DELQ".equals(lmLoan.getLoanDebtSts()) || "OVER".equals(lmLoan.getLoanDebtSts()))
+							&& SystemUtils.isAmtGreatThanZero(StringUtil.stringToDouble(lmLoan.getLoanIntRate()))
+							&& YnFlag.YES.getCodeInDb().equals(psOdInd) ) {
+						LmLoanCont lmLoanCont = DAOContainer.getLmLoanContDAO(false).findByLoanContNo(null, lcAppl.getContNo());
+						if (null != lmLoanCont) {
+							loan_od_grace=lmLoanCont.getLoanOdGrace();
+							flag=true;
+							lmLoanCont.setLoanOdGrace((short) 0);
+							DAOContainer.getLmLoanContDAO(false).merge(null, lmLoanCont);
+						}
+					}
+
+					long mhtRepaymentNo = SystemInfo.getSystemInfo().getNextTransactionSeqNo();
+
+					for (int i = 0; i < lmAtpyDetls.size(); i++) {
+
+						LmAtpyDetl lmAtpyDetl = (LmAtpyDetl)lmAtpyDetls.get(i);
+						lmAtpyDetl.setAtpyTxAmt(lmAtpyDetl.getAtpyPaymAmt());
+						lmAtpyDetl.setAtpySts(ATPYState.FREEZE.getCodeInDb());
+						lmAtpyDetl.setGutrNo(repaymentNo);	//平台还款单号
+						lmAtpyDetl.setRepaymentNo(mhtRepaymentNo);//出资方还款单号
+						//更新还款状态
+						DAOContainer.getLmAtpyDetlDAO(false).merge(conn, lmAtpyDetl);
+
+						BatchJobContext jobContext = new BatchJobContext("", openDay, lmLoan.getBankCde(), lmLoan.getBchCde(), null, loanNo, null, null, true);
+
+						//京东批扣监管36减免 by zsj 2020.04.07 start
+						String perdNo=lmAtpyDetl.getRepaymentPeriod();
+						RedlineAdjLog redlineAdjLogATPY = DAOContainer.getRedlineRateContDAO(false).findByLoanNoAndDt(null, loanNo,openDay, "ATPY"+perdNo);
+						if (redlineAdjLogATPY != null) {
+							updateLmPmShdAndFeeATPY(cont, conn,perdNo,redlineAdjLogATPY, lmLoan,openDay);
+						}
+						//京东批扣监管36减免 by zsj 2020.04.07 end
+
+						System.out.println("=== 京东批量还款还款记账开始, 平台还款单号: " + repaymentNo + "期号: "+lmAtpyDetl.getRepaymentPeriod()+"===");
+						try {
+							ServiceContainer.getGenRepayTask().saveOneLoanBCCBOPT(jobContext, lmAtpyDetl, JobBussType.ALLLOAN,TransCode.LNCQ);
+						} catch (Exception e) {
+							lmAtpyDetl.setAtpySts(ATPYState.FA.getCodeInDb());
+							lmAtpyDetl.setAtpyErrDesc("京东批量还款记账失败"+e.getMessage());	//平台还款单号
+							DAOContainer.getLmAtpyDetlDAO(false).merge(conn, lmAtpyDetl);
+							//批扣记账失败时，需要将宽限期更新为原本的宽限期loan_od_grace add by yangxin 20190716 start
+							if (flag) {
+								LmLoanCont lmLoanCont = DAOContainer.getLmLoanContDAO(false).findByLoanContNo(null, lcAppl.getContNo());
+								if (null != lmLoanCont) {
+									lmLoanCont.setLoanOdGrace((short) loan_od_grace);
+									DAOContainer.getLmLoanContDAO(false).merge(null, lmLoanCont);
+								}
+							}
+							//批扣记账失败时，需要将宽限期更新为原本的宽限期loan_od_grace add by yangxin 20190716 end
+							e.printStackTrace();
+							throw new Card2YcloansException(Card2YcloansException.ERROR99999, "京东批量还款记账操作失败!");
+						}
+						System.out.println("=== 京东批量还款还款记账结束, 平台还款单号: " + repaymentNo + "期号: "+lmAtpyDetl.getRepaymentPeriod()+"===");
+					}
+
+					//对于还逾期多期的记录做特殊处理
+					if (flag) {
+						LmLoanCont lmLoanCont = DAOContainer.getLmLoanContDAO(false).findByLoanContNo(null, lcAppl.getContNo());
+						if (null != lmLoanCont) {
+							lmLoanCont.setLoanOdGrace((short) loan_od_grace);
+							DAOContainer.getLmLoanContDAO(false).merge(null, lmLoanCont);
+						}
+					}
+
+					respMap.put("mhtRepaymentNo", mhtRepaymentNo+"");	//出资方还款单号
+					respMap.put("repaymentAmount", repaymentAmount);	//还款金额
+
+					System.out.println("=== 京东批扣还款发起结束 , 借据号: " + loanNo + " ===");
+				}
+
+				//主动还款处理
+				if ("REPAYMENT".equals(type)) {
+
+					System.out.println("=== 京东主动还款发起结束 , 借据号: " + loanNo + " ===");
+
+					double setlAmt = 0d;	//提前还本金额(试算金额)
+					String setlMode = "";	//核心还款模式
+					//增加宽限期和是否更新了宽限期为0的标致，用来存原本贷后合同的宽限期 add by yangxin 20190716 start
+					int loan_od_grace_r=0;
+					boolean flag_r =false;
+					//增加宽限期和是否更新了宽限期为0的标致，用来存原本贷后合同的宽限期 add by yangxin 20190716 end
+					//结清还款
+					if ("SETTLE".equals(repaymentType)) {
+						//有欠款未还清暂不允许提前还款
+						List<Serializable> lmPmShds = new ArrayList<Serializable>();
+						sql = " select * from lm_pm_shd where loan_no = ? and ps_due_dt <= ? and setl_ind = ? ";
+						params = new Object[]{loanNo, openDay, YnFlag.NO.getCodeInDb()};
+						lmPmShds = dao.findBySql(conn, sql, params, new LmPmShd());
+
+						if (CollectionUtils.isNotEmpty(lmPmShds)) {
+							throw new Card2YcloansException("INV00001", "有欠款未还清,请先还清欠款,再做结清还款!");
+						}
+						setlMode = PaymentMode.ALL.getCodeInDb();
+						//add by yangxin 全部结清保存LmOlDdaLog表中tradeNo字段为全部结清的所有期数 start
+						String PsPerdNo4FS = "";
+						List<Serializable> lmPmShds4PsPerdNo = new ArrayList<Serializable>();
+						sql = " select * from lm_pm_shd where loan_no = ? and setl_ind = ? ";
+						params = new Object[]{loanNo, YnFlag.NO.getCodeInDb()};
+						lmPmShds4PsPerdNo = dao.findBySql(conn, sql, params, new LmPmShd());
+						for(int i = 0; i < lmPmShds4PsPerdNo.size(); i++) {
+							LmPmShd lmPmShd4PsPerdNo = (LmPmShd)lmPmShds4PsPerdNo.get(i);
+							PsPerdNo4FS += lmPmShd4PsPerdNo.getId().getPsPerdNo()+",";
+						}
+						if(PsPerdNo4FS != null && !"".equals(PsPerdNo4FS)) {
+							repaymentPeriod = PsPerdNo4FS.substring(0,PsPerdNo4FS.length()-1);
+						}
+						System.out.println("借据号: " + loanNo + " ===repaymentPeriod:"+repaymentPeriod);
+						//add by yangxin 全部结清保存LmOlDdaLog表中tradeNo字段为全部结清的所有期数 end
+					}
+					//逾期还款 + 正常还款
+					if ("OVERDUE".equals(repaymentType) || "NORMAL".equals(repaymentType)) {
+
+						List<Serializable> lmPmShds = new ArrayList<Serializable>();
+						sql = " select * from lm_pm_shd where loan_no = ? and ps_perd_no in ( " + repaymentPeriod +  " ) ";
+						params = new Object[]{loanNo};
+						lmPmShds = dao.findBySql(conn, sql, params, new LmPmShd());
+						String psOdInd = "";
+						if (CollectionUtils.isEmpty(lmPmShds)) {
+							throw new Card2YcloansException("INV00001", "核心没有找到逾期还款对应的期数!");
+						}
+
+						for (int i = 0; i < lmPmShds.size(); i++) {
+
+							LmPmShd lmPmShd = (LmPmShd)lmPmShds.get(i);
+
+							if ("Y".equals(lmPmShd.getSetlInd())) {
+								throw new Card2YcloansException("INV10002", "还款计划第"+ lmPmShd.getId().getPsPerdNo()+ "期已结清不需要还款!");
+							}
+							//当期应还服务费
+							double psFeeAmt = SystemUtils.amtAddNull(lmPmShd.getLateFee(), lmPmShd.getPsFeeAmt());
+							//存在逾期90天北银自己批扣的数据，会还某一期的部分逾期利息、当期利息、当期本金，所有的数据都要减去已还金额 modify by yangxin 20190705 start
+							//当期应还罚息= 逾期利息+已计提逾期利息-已还逾期利息
+							double psOdIntAmt = SystemUtils.amtSubs(
+									SystemUtils.amtAddNull(lmPmShd.getPsOdIntAmt(), lmPmShd.getPsCurOdIncTaken()),
+									SystemUtils.getZeroDoubleIfNull(lmPmShd.getSetlOdIntAmt()));
+							//当期应还利息= 正常利息-已还利息
+							double psNormIntAmt = SystemUtils.amtSubs(
+									SystemUtils.getZeroDoubleIfNull(lmPmShd.getPsNormIntAmt()),
+									SystemUtils.getZeroDoubleIfNull(lmPmShd.getSetlNormInt()));
+							//当期本金= 本金-已还本金
+							double dqsetlAmt = SystemUtils.amtSubs(
+									SystemUtils.getZeroDoubleIfNull(lmPmShd.getPsPrcpAmt()),
+									SystemUtils.getZeroDoubleIfNull(lmPmShd.getSetlPrcp()));
+							//setlAmt =  SystemUtils.exactAdd(setlAmt,SystemUtils.exactAdd(SystemUtils.getZeroDoubleIfNull(lmPmShd.getPsPrcpAmt()),SystemUtils.getZeroDoubleIfNull(lmPmShd.getPsNormIntAmt()),SystemUtils.getZeroDoubleIfNull(psFeeAmt),SystemUtils.getZeroDoubleIfNull(psOdIntAmt)));
+							setlAmt = SystemUtils.exactAdd(setlAmt,
+									SystemUtils.exactAdd(SystemUtils.getZeroDoubleIfNull(dqsetlAmt),
+											SystemUtils.getZeroDoubleIfNull(psNormIntAmt),
+											SystemUtils.getZeroDoubleIfNull(psFeeAmt),
+											SystemUtils.getZeroDoubleIfNull(psOdIntAmt)));
+							//存在逾期90天北银自己批扣的数据，会还某一期的部分逾期利息、当期利息、当期本金，所有的数据都要减去已还金额  modify by yangxin 20190705 end
+
+							psOdInd = lmPmShd.getPsOdInd();
+							System.out.println("psOdIntAmt:"+psOdIntAmt+"psNormIntAmt:"+psNormIntAmt+"dqsetlAmt:"+dqsetlAmt+"setlAmt:"+setlAmt+"psOdInd:"+psOdInd);
+						}
+
+						setlMode = PaymentMode.NORMAL.getCodeInDb();
+						//连续逾期多期的数据，前几期通过批扣单期还清，最近一期在宽限期内通过主动还款还清，还款时试算方法认为在宽限期不计罚息导致记账金额不一致 add by yangxin 20190716 start
+						if ("OVERDUE".equals(repaymentType) && ("DELQ".equals(lmLoan.getLoanDebtSts()) || "OVER".equals(lmLoan.getLoanDebtSts()))
+								&& SystemUtils.isAmtGreatThanZero(StringUtil.stringToDouble(lmLoan.getLoanIntRate()))
+								&& YnFlag.YES.getCodeInDb().equals(psOdInd) ) {
+							LmLoanCont lmLoanCont = DAOContainer.getLmLoanContDAO(false).findByLoanContNo(null, lcAppl.getContNo());
+							if (null != lmLoanCont) {
+								loan_od_grace_r=lmLoanCont.getLoanOdGrace();
+								flag_r=true;
+								lmLoanCont.setLoanOdGrace((short) 0);
+								DAOContainer.getLmLoanContDAO(false).merge(null, lmLoanCont);
+							}
+						}
+						//连续逾期多期的数据，前几期通过批扣单期还清，最近一期在宽限期内通过主动还款还清，还款时试算方法认为在宽限期不计罚息导致记账金额不一致 add by yangxin 20190716 end
+					}
+					//提前还款
+					if ("ADVANCE".equals(repaymentType)) {
+
+						//有欠款未还清暂不允许提前还款
+						List<Serializable> lmPmShds = new ArrayList<Serializable>();
+						sql = " select * from lm_pm_shd where loan_no = ? and ps_due_dt <= ? and setl_ind = ? ";
+						params = new Object[]{loanNo, openDay, YnFlag.NO.getCodeInDb()};
+						lmPmShds = dao.findBySql(conn, sql, params, new LmPmShd());
+
+						if (CollectionUtils.isNotEmpty(lmPmShds)) {
+							throw new Card2YcloansException("INV00001", "有欠款未还清,请先还清欠款,再做提前还款!");
+						}
+
+						if (StringUtil.isNull(repaymentPeriod)) {
+							throw new Exception("提前还款请提供具体还款期数!");
+						}
+
+						sql = " select * from lm_pm_shd where loan_no = ? and ps_perd_no in ( " + repaymentPeriod +  " ) ";
+						params = new Object[]{loanNo};
+						lmPmShds = dao.findBySql(conn, sql, params, new LmPmShd());
+
+						if (CollectionUtils.isEmpty(lmPmShds)) {
+							throw new Card2YcloansException("INV00001", "核心没有找到提前还款对应的期数!");
+						}
+						for (int i = 0; i < lmPmShds.size(); i++) {
+							LmPmShd lmPmShd = (LmPmShd)lmPmShds.get(i);
+							if ("Y".equals(lmPmShd.getSetlInd())) {
+								throw new Card2YcloansException("INV10002", "还款计划第"+ lmPmShd.getId().getPsPerdNo()+ "期已结清不需要还款!");
+							}
+							setlAmt = SystemUtils.amtAddNull(setlAmt, lmPmShd.getPsPrcpAmt());
+						}
+						setlMode = PaymentMode.ADVANCE.getCodeInDb();
+					}
+
+					//试算获取主动还款信息
+					KeyedCollection kColl = InitiativeRepaymentUtils.getCalcResult(conn, setlMode, loanNo,setlAmt);
+
+					double amtOld = Double.parseDouble(String.valueOf(kColl.getDataValue("AMT")));	//应还款金额
+					System.out.println("amtOld:"+amtOld);
+
+					//检查总金额是否相等
+					if(!SystemUtils.isAmtEqual(amtOld, amtNew)){
+
+						Map<String, String> paraMap = new HashMap<String, String>();
+						paraMap.put("repaymentDealTime", repaymentDealTime);//还款日期
+						paraMap.put("mhtRepaymentDate", mhtRepaymentDate);//还款确认日期
+						paraMap.put("intWaiveDate",lastDueDt);//减免费用日期
+						paraMap.put("setlMode", setlMode);//还款模式
+						paraMap.put("amtNew", amtNew+"");//实际还款总金额
+						paraMap.put("amtOld", amtOld+"");//应还款总额
+
+						//减免罚息利息
+						doIntWaive(cont, conn, loanNo, paraMap);
+
+						//减免后重新试算
+						kColl = InitiativeRepaymentUtils.getCalcResult(conn, setlMode, loanNo,setlAmt);
+						amtOld = Double.parseDouble(String.valueOf(kColl.getDataValue("AMT")));	//应还款金额
+						if (!SystemUtils.isAmtEqual(amtOld, amtNew)) {
+							throw new Card2YcloansException("INV00001", "还款金额和核心试算金额不匹配,请确认!");
+						}
+					}
+
+					String txLogSeq = String.valueOf(dao.getSeq(conn, "SEQ_TXLOG_NO"));	//流水号
+					//生成费用记录
+					System.out.println("=== 京东还款费用记录生成开始,  借据号: " + loanNo + " ===");
+					IndexedCollection iColl = (IndexedCollection)Card2YcloansCommUtils.getIcoll(kColl);
+					KeyedCollection kkCol = null;
+					LmFeeTxT feeTxT = new LmFeeTxT();
+					if(iColl != null){
+						for(int i=0;i<iColl.size();i++){
+							kkCol = (KeyedCollection)iColl.get(i);
+							if(openDay.equals(kkCol.get("FEE_SETL_DT"))){ //只保存新生成的费用记录(当天的)
+								feeTxT = (LmFeeTxT)Card2YcloansCommUtils.kCollToDomain(new LmFeeTxT(), kkCol);
+								feeTxT.getId().setTxLogSeq(Long.valueOf(txLogSeq));
+								feeTxT.setHoldInd("N");
+								//modify for 京东提前还款违约金 by zhuly 2019-12-01 start
+								//feeTxT.setFeeTyp("116");
+								feeTxT.setFeeTyp("119");
+								//dao.save(conn, feeTxT);
+								//modify for 京东提前还款违约金 by zhuly 2019-12-01 end
+								DAOContainer.getLmFeeTxTDAO(false).merge(conn, feeTxT);
+							}
+						}
+					}
+					System.out.println("=== 京东还款费用记录生成结束, , 借据号: " + loanNo + " ===");
+
+					//生成还款临时表 lmSetlmtLogT
+					System.out.println("=== 京东还款临时表 lmSetlmtLogT 生成结束 , 借据号: " + loanNo + " ===");
+					LmSetlmtLogTComp lmSetlmtLogTComp = Factory.getInstance().getBean("LmSetlmtLogTComp");	//获取当期剩余正常本金
+					String psRemPrcp = lmSetlmtLogTComp.queryPsRemPrcp(loanNo, openDay, dataSource);
+					LmSetlmtLogT lmSetlmtLogT = new LmSetlmtLogT();
+					lmSetlmtLogT = (LmSetlmtLogT)Card2YcloansCommUtils.kCollToDomain(new LmSetlmtLogT(), kColl);
+					lmSetlmtLogT.setTxLogSeq(Long.valueOf(txLogSeq));//交易流水号
+					lmSetlmtLogT.setSetlRevseInd(YnFlag.NO.getCodeInDb());//冲正标志
+					lmSetlmtLogT.setSetlCreateDt(openDay);//创建日期
+					lmSetlmtLogT.setSetlCreateUsr(SystemInfo.getSystemInfo().getCurrentUser());//创建用户
+					lmSetlmtLogT.setSetlValDt(openDay);//生效日期
+					lmSetlmtLogT.setPsRemPrcp(Double.valueOf(psRemPrcp));// 当期剩余正常本金
+					lmSetlmtLogT.setSetlMode(setlMode); //还款模式
+					lmSetlmtLogT.setSetlTyp("NM");	//还款类型
+					lmSetlmtLogT.setSetlCompInd(YnFlag.NO.getCodeInDb()); //代偿标识,默认为"N:否"
+					lmSetlmtLogT.setPaymInd(YnFlag.YES.getCodeInDb());
+					lmSetlmtLogT.setInputSrc("18");
+					lmSetlmtLogT.setBchCde(lmLoan.getBchCde());
+					lmSetlmtLogT.setPaymAcctBankCde(paymChannel);
+					lmSetlmtLogT.setState(PUBConstant.WFI_STATE_PASS);  //自动审批通过
+					System.out.println("=== 京东还款临时表 lmSetlmtLogT 生成结束 , 借据号: " + loanNo + " ===");
+					//保存主动还款数据
+					DAOContainer.getLmSetlmtLogTDAO(false).merge(conn, lmSetlmtLogT);
+
+					//生成还款日志表 LmOlDdaLog
+					System.out.println("=== 京东还款日志表 LmOlDdaLog 生成开始 , 借据号: " + loanNo + " ===");
+					LmOlDdaLog kCollOlDda = new LmOlDdaLog();
+					LmOlDdaLogId lmOlDdaLogId = new LmOlDdaLogId();
+					lmOlDdaLogId.setTxlogSeq(lmSetlmtLogT.getTxLogSeq());
+					lmOlDdaLogId.setTxlogSeqNo(1L);
+					kCollOlDda.setId(lmOlDdaLogId);
+					kCollOlDda.setOlDdaDt(lmSetlmtLogT.getSetlValDt());
+					kCollOlDda.setTransAmt(amtNew);
+					kCollOlDda.setRecvPayInd("R");
+					kCollOlDda.setPaymAcctBankCde(lmSetlmtLogT.getPaymAcctBankCde());
+					kCollOlDda.setSendInd("N");
+					kCollOlDda.setGenGlInd("N");
+					kCollOlDda.setTransSts("");
+					kCollOlDda.setHostPrcsSts("");
+					kCollOlDda.setDdaSts(ATPYState.FREEZE.getCodeInDb());	//默认成功
+					kCollOlDda.setLoanNo(loanNo);//借据号
+					kCollOlDda.setRevsInd(PUBConstant.N);//撤销标识
+					kCollOlDda.setFuncId(PUBConstant.FUNC_ID_REPAY);
+					kCollOlDda.setPaymInd(YnFlag.YES.getCodeInDb());
+					kCollOlDda.setAcctIdType(lmLoan.getIdType());
+					kCollOlDda.setAcctIdNo(lmLoan.getIdNo());
+					kCollOlDda.setAcctNam(lmLoan.getCustName());
+					kCollOlDda.setSessionId(repaymentNo);
+					kCollOlDda.setThirdInd(paymChannel);
+					kCollOlDda.setTradeNo(repaymentPeriod);	//还款期数
+					kCollOlDda.setOrderNo(1L);
+					DAOContainer.getLmOlDdaLogDAO(false).merge(conn, kCollOlDda);
+					System.out.println("=== 京东还款日志表 LmOlDdaLog 生成开始 , 借据号: " + loanNo + " ===");
+
+					//构建 Context ,OperaUserInf
+					String currentuserid = intfMap.get("CURRENTUSERID").toString();
+					String bankCde = intfMap.get("BANKNO").toString();
+//					EMPFlowComponentFactory factory = (EMPFlowComponentFactory) EMPFlowComponentFactory.getComponentFactory("CMISBiz");
+//					Context rootCtx = factory.getContextNamed(factory.getRootContextName());
+					Context context = new Context();
+					context.setDataElement(new KeyedCollection());
+					context.chainedTo(rootCtx);
+					context.put("currentuserid", currentuserid);
+					context.put("bankNo", bankCde);
+					OperaUserInf operaUsr = new  OperaUserInf();
+					operaUsr.setUserId(currentuserid) ;
+					operaUsr.setUserName(SInfoUtils.getUsrNameByUsrId(bankCde, currentuserid)) ;
+					operaUsr.setBankCde(bankCde);
+
+					System.out.println("=== 主动还款新增的费用数据(LmFeeTxT)转移到代收费表中(LmHoldFeeTx)开始 , 借据号: " + loanNo + " ===");
+					LmTransferFeeTrans lmTransferFeeTrans = new LmTransferFeeTrans();
+					lmTransferFeeTrans.setLoanNo(loanNo);
+					lmTransferFeeTrans.setTxLogSeq(txLogSeq);
+					ServiceContainer.getPaymentFacade().transferLmFeeTxTToLmHoldFeeTx(context, conn, lmTransferFeeTrans, operaUsr);
+					System.out.println("=== 主动还款新增的费用数据(LmFeeTxT)转移到代收费表中(LmHoldFeeTx)结束 , 借据号: " + loanNo + " ===");
+
+					//直接进行记账
+					System.out.println("=== 京东主动还款还款记账开始, 借据号: " + loanNo + " ===");
+					try {
+						ServiceContainer.getLmOlDdaLogBatchImp().saveOnlinePayLoan(conn, context, operaUsr, loanNo, lmSetlmtLogT.getTxLogSeq(), openDay, amtNew);
+						conn.commit();
+						System.out.println("-----" + loanNo + "京东还款记账结束：" + (new Date()).getTime());
+					} catch (Exception e) {
+						kCollOlDda.setSendInd(YnFlag.YES.getCodeInDb());
+						kCollOlDda.setDdaSts(ATPYState.FA.getCodeInDb());
+						kCollOlDda.setErrDesc("京东主动还款记账失败"+e.getMessage());
+						DAOContainer.getLmOlDdaLogDAO(false).merge(conn, kCollOlDda);
+						//主动还款记账失败时，需要将宽限期更新为原本的宽限期loan_od_grace add by yangxin 20190716 start
+						if (flag_r) {
+							LmLoanCont lmLoanCont = DAOContainer.getLmLoanContDAO(false).findByLoanContNo(null, lcAppl.getContNo());
+							if (null != lmLoanCont) {
+								lmLoanCont.setLoanOdGrace((short) loan_od_grace_r);
+								DAOContainer.getLmLoanContDAO(false).merge(null, lmLoanCont);
+							}
+						}
+						//主动还款记账失败时，需要将宽限期更新为原本的宽限期loan_od_grace add by yangxin 20190716 end
+						e.printStackTrace();
+						throw new Card2YcloansException(Card2YcloansException.ERROR99999, "京东主动还款记账操作失败!");
+					}
+
+					//对于逾期多期的做特殊处理，将宽限期更新回去  add by yangxin 20190716 start
+					if (flag_r) {
+						LmLoanCont lmLoanCont = DAOContainer.getLmLoanContDAO(false).findByLoanContNo(null, lcAppl.getContNo());
+						if (null != lmLoanCont) {
+							lmLoanCont.setLoanOdGrace((short) loan_od_grace_r);
+							DAOContainer.getLmLoanContDAO(false).merge(null, lmLoanCont);
+						}
+					}
+					//对于逾期多期的做特殊处理，将宽限期更新回去  add by yangxin 20190716 end
+					System.out.println("=== 京东主动还款还款记账结束, 借据号: " + loanNo + " ===");
+
+					respMap.put("mhtRepaymentNo", kCollOlDda.getId().getTxlogSeq()+"");	//出资方还款单号
+					respMap.put("repaymentAmount", SystemUtils.amtMultToString(kCollOlDda.getTransAmt(), 100));	//还款金额
+
+				}
+
+				respMap.put("code", Card2YcloansException.ERROR00000);	//返回编码
+				respMap.put("msg", "成功");	//返回信息
+				respMap.put("repaymentDealStatus", "SUCCESS");	//处理状态 (入账状 态)
+			}
+
+			// add by liuyd for 更新mq_message 20200402 start
+			try {
+				log.info("=== 更新mq_message此笔数据status为2，开始 ===");
+				paramss = new Object[]{repaymentNo,"1","JingDong","repay"};
+				mqMessageList = dao.findBySql(conn, sqlString, paramss, new MqMessage());
+				if(mqMessageList != null && mqMessageList.size() == 1) {
+					log.info("=== 校验mq_message符合条件，可以继续下面的业务处理 ===");
+					// 更新mq_message表此笔status为‘2’
+					MqMessage mqMessage = (MqMessage)mqMessageList.get(0);
+					mqMessage.setStatus("2"); // 处理成功
+					mqMessage.setUpdateTime(DateOperation.getNowDateTimeString());
+					dao.update(conn, mqMessage, "seqNo");
+					conn.commit();
+				} else {
+					log.info("=== 校验mq_message不符合条件,还款订单号: " + repaymentNo + " ===");
+				}
+				log.info("=== 更新mq_message此笔数据status为2，结束 ===");
+			} catch (Exception e) {
+				log.error(e.getMessage(), e);
+			}
+			// add by liuyd for 更新mq_message 20200402 end
+
+		} catch (Card2YcloansException e) {
+			log.error(e.getMsg(), e);
+			respMap.put("code", e.getCode());	//返回编码
+			respMap.put("msg", e.getMsg());	//返回信息
+			respMap.put("repaymentDealStatus", "FAILURE");	//处理状态 (入账状 态)
+//			throw e;
+		}catch (Exception e) {
+			log.error(e.getMessage(), e);
+			respMap.put("code", Card2YcloansException.ERROR99999);	//返回编码
+			respMap.put("msg", e.getMessage());	//返回信息
+			respMap.put("repaymentDealStatus", "FAILURE");	//处理状态 (入账状 态)
+//			throw e;
+		}finally{
+			//归还conn连接
+			if(conn != null) {
+				try {
+					//ConnectionManager.releaseConnection(dataSource, conn);
+				} catch (EMPJDBCException e) {
+					log.error("归还连接失败：", e);
+				}
+			}
+
+			try {
+				if (isInform) {
+					new AsynJDPayResutInform(respMap).start();
+				}
+			} catch (Exception e2) {
+				log.error("通知异常：", e2);
+//				throw e2;
+			}
+
+		}
+	}
+
+	/**
+	 * 跨日还款利息调整
+	 * @param context
+	 * @param connection
+	 * @param loanNo
+	 * @param paraMap
+	 * @throws Exception
+	 */
+	public void doIntWaive(Context context, Connection connection, String loanNo, Map<String, String> paraMap) throws Exception {
+
+		try {
+			String repaymentDealDate  = paraMap.get("repaymentDealTime").substring(0, 8);//还款日期
+			String mhtRepaymentDate  = paraMap.get("mhtRepaymentDate");//还款确认日期
+			String intWaiveDate  = paraMap.get("intWaiveDate");//减免费用日期
+			String setlMode  = paraMap.get("setlMode");//还款模式
+			double amtNew  = Double.valueOf(paraMap.get("amtNew"));//实际还款总金额
+			double amtOld  = Double.valueOf(paraMap.get("amtOld"));//应还款总额
+			//资金方入账日期 > 京东实际还款日期(京东T日试算,T+1日还款的情况)
+			if (mhtRepaymentDate.compareTo(repaymentDealDate) > 0 ) {
+				double adjIntAmt = 0;	//计提正常利息
+				double adjOdIntAmt = 0;	//计提逾期利息
+
+				List<LmGlTx> intLmGlTxs = DAOContainer.getLmGlTxDAO(false).findByLoanNoAndTxFuncIdAndDate(connection, loanNo, "LNAE", intWaiveDate, "H01");
+				if (CollectionUtils.isNotEmpty(intLmGlTxs)) {
+					adjIntAmt = intLmGlTxs.get(0).getTxAmt();
+				}
+
+				List<LmGlTx> odIntLmGlTxs = DAOContainer.getLmGlTxDAO(false).findByLoanNoAndTxFuncIdAndDate(connection, loanNo, "LNBX", intWaiveDate, "A02");
+				if (CollectionUtils.isNotEmpty(odIntLmGlTxs)) {
+					adjOdIntAmt = odIntLmGlTxs.get(0).getTxAmt();
+				}
+
+				Map<String, Double> maps = new HashMap<String, Double>();
+				if ((PaymentMode.ADVANCE.getCodeInDb().equals(setlMode) || PaymentMode.ALL.getCodeInDb().equals(setlMode)) && SystemUtils.amtSubs(amtOld, amtNew) == adjIntAmt) {
+					//还款类型为:提前还款或者结清还款, 减免一天的利息
+					maps.put("H01", adjIntAmt);
+					ServiceContainer.getTempTableCalls().updateInt(connection,context,loanNo, maps);
+				}else if (PaymentMode.NORMAL.getCodeInDb().equals(setlMode) && SystemUtils.amtSubs(amtOld, amtNew) == adjOdIntAmt) {
+					//还款类型为:逾期还款，减免一天的罚息
+					maps.put("A02", adjOdIntAmt);
+					ServiceContainer.getTempTableCalls().updateInt(connection,context,loanNo, maps);
+				}else {
+					throw new Card2YcloansException("INV00001", "应还款信息与客户提交的应还款信息不一致!");
+				}
+			}
+		} catch (Exception e) {
+			throw new Card2YcloansException("INV00001", "跨日还款费用处理出错:"+e.getMessage());
+		}
+	}
+
+	// 监管36批扣减免更改还款计划、费用表
+		public void updateLmPmShdAndFeeATPY(Context context, Connection connection, String perdNo, RedlineAdjLog adjLog,
+				LmLoan lmLoan, String buzDate) {
+			String loanNo = lmLoan.getLoanNo();
+			LmPmShd lps = DAOContainer.getLmPmShdDAO(false).findByPerdNo(null, loanNo,
+					Short.parseShort(perdNo));// 要减免的还款计划
+			List<LmPmShd> lmPmShds = new ArrayList<LmPmShd>();
+			double adjInt = adjLog.getAdjIntAmt();// 减免利息
+			double adjOldInt = adjLog.getAdjOldintAmt(); // 减免罚息
+			double adjodInt = adjLog.getAdjOldintAmt();// 减免记账罚息
+			// 减免利息
+			lps.setPsNormIntAmt(SystemUtils.amtSubs(lps.getPsNormIntAmt(), adjInt));
+			lps.setPsIncTaken(SystemUtils.amtSubs(lps.getPsIncTaken(), adjInt));
+			lps.setPsInstmAmt(lps.getPsNormIntAmt() + lps.getPsPrcpAmt());
+			// 减免罚息
+			if (SystemUtils.isAmtGreat(adjOldInt, lps.getPsCurOdIncTaken())) {
+				adjOldInt = SystemUtils.amtSubs(adjOldInt, lps.getPsCurOdIncTaken());
+				lps.setPsWvOdInt(SystemUtils.amtAdd(lps.getPsWvOdInt(), lps.getPsCurOdIncTaken()));// 新增
+				lps.setPsCurOdIncTaken(0.0);
+				if (SystemUtils.isAmtGreat(adjOldInt, lps.getPsOdIntAmt())) {
+					adjOldInt = SystemUtils.amtSubs(adjOldInt, lps.getPsOdIntAmt());
+					lps.setPsWvOdInt(SystemUtils.amtAdd(lps.getPsWvOdInt(), lps.getPsOdIntAmt()));// 新增
+					lps.setPsOdIntAmt(0.0);
+				} else {
+					lps.setPsOdIntAmt(SystemUtils.amtSubs(lps.getPsOdIntAmt(), adjOldInt));
+					lps.setPsWvOdInt(SystemUtils.amtAdd(lps.getPsWvOdInt(), adjOldInt));// 新增
+					adjOldInt = 0.0;
+				}
+			} else {
+				lps.setPsCurOdIncTaken(SystemUtils.amtSubs(lps.getPsCurOdIncTaken(), adjOldInt));
+				lps.setPsWvOdInt(SystemUtils.amtAdd(lps.getPsWvOdInt(), adjOldInt));// 新增
+				adjOldInt = 0.0;
+			}
+			lmPmShds.add(lps);
+			// 减免记账
+			List<LmLnInfo> lmLnInfoList = DAOContainer.getLmLnInfoDAO(connection != null).findAll(connection,
+					lmLoan.getLoanNo(), lmLoan.getBchCde(), lmLoan.getLoanCcy());
+			if (lmLnInfoList == null || lmLnInfoList.size() == 0) {
+				throw new YcLoansException("监管36利息减免处理时根据借据号【" + lmLoan.getLoanNo() + "】获取LM_LN_INFO记录为空！");
+			}
+			// 减免利息
+			PubAccountValue pv = new PubAccountValue();
+			pv.setLoanInfoList(lmLnInfoList);
+			if (SystemUtils.isAmtGreatThanZero(adjInt)) {
+				pv.setNormInt(adjInt);
+			}
+			if (SystemUtils.isAmtGreatThanZero(adjodInt)) {
+				pv.setOdInt(adjodInt);
+			}
+
+			// 记账操作
+			OnlineParam param = new OnlineParam(connection, -1, context);
+			param.setLoanNo(loanNo);
+			param.setBuzDate(buzDate);
+			param.setCustName(DAOContainer.getLmLoanContDAO(connection != null)
+					.findByLoanContNo(connection, lmLoan.getLoanContNo()).getCustName());
+
+			AccountRegValueUtils.writeLoanByPv(lmLoan, param, pv, TransCode.LNIW);
+
+			// 更新还款计划
+			DAOContainer.getLmPmShdDAO(false).updateList(null, lmPmShds);
+		}
+
+}
+
+        ]]>
+    </code-fragment>
+    <test-code>
+        <description>Connection Closed</description>
+        <!-- 预期问题个数 -->
+        <expected-problems>0</expected-problems>
+        <code-ref id="测试样例" />
+    </test-code>
+</test-data>

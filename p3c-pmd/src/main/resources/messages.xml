@@ -546,4 +546,15 @@
         <![CDATA[浮点数之间的等值判断，基本数据类型不能用==来比较，包装数据类型不能用equals来判断。]]>
     </entry>
 
+    <!-- 以下为扩展-->
+    <entry key="java.extend.MethodParameterCountRule.violation.msg">
+        <![CDATA[方法【%s】参数列表过长。 ]]>
+    </entry>
+    <entry key="java.extend.MethodParameterCountRule.rule.msg">
+        <![CDATA[说明：方法参数列表不允许超过（含）5个，建议封装到一个对象中。]]>
+    </entry>
+    <entry key="java.extend.ConnectionClosedRule.rule.msg">
+        <![CDATA[说明：数据源对象【%s】没有正确的打开和关闭]]>
+    </entry>
+    <!-- 扩展结束 -->
 </properties>

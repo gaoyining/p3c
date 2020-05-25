@@ -9,7 +9,7 @@
   </parent>
   <groupId>com.alibaba.p3c</groupId>
   <artifactId>p3c-pmd</artifactId>
-  <version>2.0.0</version>
+  <version>2.1.0</version>
   <packaging>jar</packaging>
   <name>p3c-pmd</name>
   <properties>
@@ -121,6 +121,7 @@
             <ruleset>rulesets/java/ali-orm.xml</ruleset>
             <ruleset>rulesets/java/ali-other.xml</ruleset>
             <ruleset>rulesets/java/ali-set.xml</ruleset>
+            <ruleset>rulesets/java/bobcfc-extend.xml</ruleset>
           </rulesets>
           <excludes>
             <exclude>**/FixClassTypeResolver.java</exclude>
@@ -138,7 +139,7 @@
           <dependency>
             <groupId>com.alibaba.p3c</groupId>
             <artifactId>p3c-pmd</artifactId>
-            <version>2.0.0</version>
+            <version>2.1.0</version>
           </dependency>
         </dependencies>
       </plugin>
@@ -170,26 +171,26 @@
           </execution>
         </executions>
       </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-javadoc-plugin</artifactId>
-        <version>2.10.4</version>
-        <executions>
-          <execution>
-            <id>attach-javadocs</id>
-            <goals>
-              <goal>jar</goal>
-            </goals>
-          </execution>
-        </executions>
-        <configuration>
-          <tags>
-            <tag>
-              <name>date</name>
-            </tag>
-          </tags>
-        </configuration>
-      </plugin>
+<!--      <plugin>-->
+<!--        <groupId>org.apache.maven.plugins</groupId>-->
+<!--        <artifactId>maven-javadoc-plugin</artifactId>-->
+<!--        <version>2.10.4</version>-->
+<!--        <executions>-->
+<!--          <execution>-->
+<!--            <id>attach-javadocs</id>-->
+<!--            <goals>-->
+<!--              <goal>jar</goal>-->
+<!--            </goals>-->
+<!--          </execution>-->
+<!--        </executions>-->
+<!--        <configuration>-->
+<!--          <tags>-->
+<!--            <tag>-->
+<!--              <name>date</name>-->
+<!--            </tag>-->
+<!--          </tags>-->
+<!--        </configuration>-->
+<!--      </plugin>-->
       <!-- <plugin>
          <groupId>org.apache.maven.plugins</groupId>
          <artifactId>maven-gpg-plugin</artifactId>

@@ -3,9 +3,7 @@ package com.alibaba.p3c.pmd.lang.java.rule.extend;
 import com.alibaba.p3c.pmd.lang.java.rule.AbstractAliRule;
 import net.sourceforge.pmd.lang.ast.Node;
 import net.sourceforge.pmd.lang.java.ast.ASTCompilationUnit;
-import net.sourceforge.pmd.lang.java.ast.ASTFormalParameters;
 import net.sourceforge.pmd.lang.java.ast.ASTName;
-import net.sourceforge.pmd.lang.java.ast.ASTPrimaryPrefix;
 
 import java.util.List;
 
@@ -17,45 +15,52 @@ import java.util.List;
  */
 public class ConnectionClosedRule extends AbstractAliRule {
 
-    private static final String PRIMARYPREFIX_XPATH = "//Name";
+    private static final String NAME_XPATH = "//Name";
 
     @Override
     public Object visit(ASTCompilationUnit node, Object data) {
         try {
 
             boolean openFlag = false;
-            boolean closedFlage = false;
-            String conParamName = null;
+            boolean closedFlag = false;
 
             // 找到所方法节点
-            List<Node> nodes = node.findChildNodesWithXPath(PRIMARYPREFIX_XPATH);
-            if (nodes != null && nodes.size() > 0) {
-                for (Node node1 : nodes) {
-                    ASTName astName = (ASTName)node1;
-                    if("DriverManager.getConnection".equals(astName.getImage())){
+            List<Node> nameNodes = node.findChildNodesWithXPath(NAME_XPATH);
+            if (nameNodes != null && nameNodes.size() > 0) {
+                for (int y =0 ; y < nameNodes.size() ; y++) {
+                    ASTName astName1 = (ASTName)nameNodes.get(y);
+                    if("ConnectionManager.getConnection".equals(astName1.getImage())){
+//                        for (Node node2 : nodes) {
+//                            ASTName astName2 = (ASTName)node2;
+//                            if("ConnectionManager.releaseConnection")
+//                            if((conParamName + ".close").equals(astName2.getImage())){
+//                                closedFlage = true;
+//                            }
+//                        }
+
+                        // 打开了数据源
                         openFlag = true;
-                        break;
-                    }else{
-                        conParamName = astName.getImage();
+
+                        for (int i = 0 ; i < nameNodes.size() ; i++){
+                            ASTName astName2 = (ASTName)nameNodes.get(i);
+                            if("ConnectionManager.releaseConnection".equals(astName2.getImage())){
+                                // 关闭数据源
+                                closedFlag = true;
+                                break;
+                            }
+                        }
+
+                        // 以下两种情况不报错
+                        // 1、打开数据源，同时关闭数据源
+                        // 2、没有打开数据源
+                        boolean b = (openFlag && closedFlag) && (!closedFlag && !closedFlag);
+
+                        if(!b){
+                            addViolationWithMessage(data, nameNodes.get(y-1),
+                                    "java.extend.ConnectionClosedRule.rule.msg",
+                                    new Object[]{((ASTName)nameNodes.get(y-1)).getImage()});
+                        }
                     }
-                }
-
-                for (Node node1 : nodes) {
-                    ASTName astName = (ASTName)node1;
-                    if((conParamName + ".close").equals(astName.getImage())){
-                        closedFlage = true;
-                        break;
-                    }
-                }
-
-                boolean resultFlag = openFlag && closedFlage || !openFlag && !closedFlage ;
-
-                if (!resultFlag) {
-                    // 违反规则提示信息，第二个参数是提示信息位置，第三个参数是提示信息key，第四个参数用来替换提示信息
-                    // 中的占位符，这里获取的节点image属性就是方法名称
-                    addViolationWithMessage(data, null,
-                            "java.extend.ConnectionClosedRule.rule.msg",
-                            new Object[]{conParamName});
                 }
             }
         } catch (Exception e) {
