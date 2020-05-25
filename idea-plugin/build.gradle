@@ -1,5 +1,7 @@
 buildscript {
     repositories {
+        mavenLocal()
+
         maven {
             url "https://oss.sonatype.org/content/repositories/snapshots/"
         }
@@ -26,8 +28,9 @@ allprojects {
         resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
     }
     repositories {
-        jcenter()
+        mavenLocal()
         mavenCentral()
+        jcenter()
     }
 
     dependencies {
